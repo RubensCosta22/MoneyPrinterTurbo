@@ -42,7 +42,7 @@ from app.models.schema import (
     VideoTransitionMode,
 )
 from app.services import bgm as bgm_service
-from app.services import cache_manager, llm, video, voice, webui_task
+from app.services import cache_manager, llm, script_materials, video, voice, webui_task
 from app.services import elevenlabs_music as elevenlabs_music_service
 from app.services import sonilo as sonilo_service
 from app.services import state as sm
@@ -243,6 +243,8 @@ def _initialize_session_state():
         "ui_language": initial_ui_language,
         # 已落盘的本地素材允许用户只修改文案后继续复用。
         "local_video_materials": [],
+        # 用户为每个本地文件选择的叙事位置，跨 Streamlit rerun 保留。
+        "local_material_segment_assignments": {},
         # 生成按钮回调先登记任务，使顶部入口能立即显示运行中数量。
         "active_generation_tasks": {},
         # 最近一次从当前页面提交的任务。生成改为后台执行后，页面 Fragment
@@ -2255,6 +2257,37 @@ def _render_video_settings(panel, params):
                     accept_multiple_files=True,
                     key="local_video_materials_uploader",
                 )
+                script_segments = script_materials.split_script_segments(
+                    params.video_script
+                )
+                if uploaded_files and script_segments:
+                    st.caption(tr("Assign Local Materials to Script Segments"))
+                    segment_options = [None, *range(len(script_segments))]
+                    assignments = {}
+                    previous_assignments = st.session_state.get(
+                        "local_material_segment_assignments", {}
+                    )
+                    for file_index, uploaded_file in enumerate(uploaded_files):
+                        assignment_key = f"{file_index}:{uploaded_file.name}"
+                        previous_value = previous_assignments.get(assignment_key)
+                        selected_segment = st.selectbox(
+                            uploaded_file.name,
+                            options=segment_options,
+                            index=(
+                                segment_options.index(previous_value)
+                                if previous_value in segment_options
+                                else 0
+                            ),
+                            format_func=lambda value: (
+                                tr("Unassigned Script Segment")
+                                if value is None
+                                else f"{value + 1}. {script_segments[value][:100]}"
+                            ),
+                            key=f"local_material_segment_{assignment_key}",
+                            help=tr("Assign Local Material Help"),
+                        )
+                        assignments[assignment_key] = selected_segment
+                    st.session_state["local_material_segment_assignments"] = assignments
 
             # 文案顺序匹配会从关键词生成到最终合成全程保持叙事顺序，因此开启时
             # 顺序拼接是唯一符合实际执行逻辑的选项。同步控件值可避免界面仍显示
@@ -3824,7 +3857,13 @@ def _render_generation_controls(
             # 每次重新上传时都以本次选择的素材为准，避免旧素材不断重复追加。
             params.video_materials = []
             persisted_local_materials = []
-            for file in uploaded_files:
+            script_segments = script_materials.split_script_segments(
+                params.video_script
+            )
+            segment_assignments = st.session_state.get(
+                "local_material_segment_assignments", {}
+            )
+            for file_index, file in enumerate(uploaded_files):
                 try:
                     file_path = _build_uploaded_file_path(
                         file,
@@ -3841,12 +3880,21 @@ def _render_generation_controls(
                     m = MaterialInfo()
                     m.provider = "local"
                     m.url = file_path
+                    assignment_key = f"{file_index}:{file.name}"
+                    selected_segment = segment_assignments.get(assignment_key)
+                    if isinstance(selected_segment, int) and (
+                        0 <= selected_segment < len(script_segments)
+                    ):
+                        m.segment_index = selected_segment
+                        m.segment_label = script_segments[selected_segment]
                     params.video_materials.append(m)
                     persisted_local_materials.append(
                         {
                             "provider": m.provider,
                             "url": m.url,
                             "duration": m.duration,
+                            "segment_index": m.segment_index,
+                            "segment_label": m.segment_label,
                         }
                     )
             # 将已上传并保存到本地的视频素材写入会话，供后续只改文案时直接复用。
@@ -3861,6 +3909,8 @@ def _render_generation_controls(
                 m.provider = material.get("provider", "local")
                 m.url = material.get("url", "")
                 m.duration = material.get("duration", 0)
+                m.segment_index = material.get("segment_index")
+                m.segment_label = material.get("segment_label", "")
                 if m.url:
                     params.video_materials.append(m)
 
