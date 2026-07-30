@@ -19,6 +19,7 @@ from app.services import (
     elevenlabs_music,
     llm,
     material,
+    script_materials,
     sonilo,
     subtitle,
     task_artifacts,
@@ -566,8 +567,12 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
 def get_video_materials(task_id, params, video_terms, audio_duration):
     if params.video_source == "local":
         logger.info("\n\n## preprocess local materials")
+        ordered_materials = script_materials.order_materials_by_segment(
+            params.video_materials
+        )
         materials = video.preprocess_video(
-            materials=params.video_materials, clip_duration=params.video_clip_duration
+            materials=ordered_materials,
+            clip_duration=params.video_clip_duration,
         )
         if not materials:
             _mark_task_failed(
@@ -618,7 +623,11 @@ def generate_final_videos(
     )
     # 多视频生成默认会打散素材以增加差异；但“按文案顺序匹配素材”追求的是
     # 时间线稳定性和可解释性，所以开启后所有输出都使用顺序拼接。
-    if params.match_materials_to_script:
+    has_local_segment_assignments = (
+        params.video_source == "local"
+        and script_materials.has_segment_assignments(params.video_materials)
+    )
+    if params.match_materials_to_script or has_local_segment_assignments:
         video_concat_mode = VideoConcatMode.sequential
     elif params.video_count == 1:
         video_concat_mode = params.video_concat_mode
