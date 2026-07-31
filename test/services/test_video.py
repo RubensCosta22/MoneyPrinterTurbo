@@ -1036,10 +1036,20 @@ class TestMaterialResolutionTolerance(unittest.TestCase):
         bound = vd._MIN_MATERIAL_DIMENSION - vd._MIN_DIMENSION_TOLERANCE
         self.assertTrue(vd.is_material_resolution_acceptable(bound, bound))
 
-    def test_rejects_material_just_below_the_tolerance_bound(self):
+    def test_accepts_landscape_application_recordings(self):
+        # Real browser recordings reported by the WebUI must not be discarded
+        # merely because their short side is below the square-image threshold.
+        self.assertTrue(vd.is_material_resolution_acceptable(616, 404))
+        self.assertTrue(vd.is_material_resolution_acceptable(606, 442))
+
+    def test_rejects_material_below_the_long_side_threshold(self):
         bound = vd._MIN_MATERIAL_DIMENSION - vd._MIN_DIMENSION_TOLERANCE
-        self.assertFalse(vd.is_material_resolution_acceptable(bound - 1, 850))
-        self.assertFalse(vd.is_material_resolution_acceptable(850, bound - 1))
+        self.assertFalse(vd.is_material_resolution_acceptable(bound - 1, 404))
+
+    def test_rejects_material_below_the_short_side_threshold(self):
+        short_side = vd._MIN_MATERIAL_SHORT_SIDE
+        self.assertFalse(vd.is_material_resolution_acceptable(850, short_side - 1))
+        self.assertFalse(vd.is_material_resolution_acceptable(short_side - 1, 850))
 
     def test_rejects_genuinely_low_resolution_material(self):
         self.assertFalse(vd.is_material_resolution_acceptable(320, 240))

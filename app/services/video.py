@@ -79,6 +79,10 @@ _MIN_MATERIAL_DIMENSION = 480
 # 丢弃，最终以 "no valid materials found" 整体失败。这里留一个很小的容差，
 # 既能放行仅仅因为取整而略低于阈值的素材，也仍然能挡住真正的低清素材。
 _MIN_DIMENSION_TOLERANCE = 10
+# 浏览器录屏和应用截图经常是横向窗口，例如 616x404。它们会在竖屏成片中
+# 等比缩放并留边，不需要短边也达到 480。长边仍需接近标称最小值，短边则
+# 使用独立下限，避免把 320x240 或极窄横幅当作合格视频素材。
+_MIN_MATERIAL_SHORT_SIDE = 360
 _DEFAULT_VIDEO_CODEC = "libx264"
 _SUPPORTED_VIDEO_CODECS = (
     "libx264",
@@ -109,8 +113,13 @@ def is_material_resolution_acceptable(width: int, height: int) -> bool:
     标称最小值是 480x480，但允许比它低 `_MIN_DIMENSION_TOLERANCE` 个像素，
     以兼容编码器/消息应用向下取整导致的尺寸（例如 WhatsApp 的 478x850）。
     """
-    min_dimension = _MIN_MATERIAL_DIMENSION - _MIN_DIMENSION_TOLERANCE
-    return width >= min_dimension and height >= min_dimension
+    min_long_side = _MIN_MATERIAL_DIMENSION - _MIN_DIMENSION_TOLERANCE
+    long_side = max(width, height)
+    short_side = min(width, height)
+    return (
+        long_side >= min_long_side
+        and short_side >= _MIN_MATERIAL_SHORT_SIDE
+    )
 
 
 def _prioritize_unique_source_clips(
@@ -1319,9 +1328,9 @@ def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
             height = clip.size[1]
             if not is_material_resolution_acceptable(width, height):
                 logger.warning(
-                    f"low resolution material: {width}x{height}, minimum "
-                    f"{_MIN_MATERIAL_DIMENSION}x{_MIN_MATERIAL_DIMENSION} required "
-                    f"(tolerance {_MIN_DIMENSION_TOLERANCE}px)"
+                    f"low resolution material: {width}x{height}, minimum long "
+                    f"side {_MIN_MATERIAL_DIMENSION - _MIN_DIMENSION_TOLERANCE}px "
+                    f"and short side {_MIN_MATERIAL_SHORT_SIDE}px required"
                 )
                 # 探测到低分辨率素材后立即关闭资源，并且不要把该素材返回给后续流程。
                 close_clip(clip)
